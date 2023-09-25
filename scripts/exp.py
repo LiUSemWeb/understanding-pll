@@ -1,14 +1,11 @@
 import json
-import math
 import os.path
-import pathlib
 import time
 from itertools import permutations
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 from functional import pseq, seq
 import torch
 from torch import nn
-from torch.nn.functional import cosine_similarity, pairwise_distance
 from tqdm import tqdm
 import sys
 
@@ -18,6 +15,7 @@ torch.set_num_threads((torch.get_num_threads()*2) - 1)
 torch.set_num_interop_threads((torch.get_num_interop_threads()*2) - 1)
 
 BATCH_SIZE = 512
+# If you have memory issues with some documents, you can add them here to skip. 332 is particularly difficult.
 TOO_BIG = []#[332]
 SENTS_PER_BATCH = 32
 
@@ -116,7 +114,6 @@ class HSD(ComparativeScoringMethod):
 
 KNOWN_METHODS = [CSD(), ESD(), JSD(), MSD(), HSD(), PLL()]
 KNOWN_METHODS = {m.label: m for m in KNOWN_METHODS}
-# KNOWN_METHODS["pll"] = None
 
 
 def sentences(doc):
@@ -177,7 +174,6 @@ def answer_prompts(doc):
 
 
 def read_docred(dset:str='dev', *, path:str='data/docred', doc=-1, verbose=False):
-    # print(os.getcwd())
     if dset == 'train':
         dset = 'train_annotated'
     with open(f"{path}/{dset}.json") as datafile:
@@ -282,10 +278,6 @@ def _inner_score_stuff(self, data, inds, lens, methods, scores, all_plls, return
         origids = torch.tensor(self.tokenizer.convert_tokens_to_ids(data[ind]['tokens']), dtype=torch.long).to(
             self.device) if use_pll else None
 
-        # orig_preds = probs[0, :slen]
-        # assert slen == len(_probs[:slen + 1]) - 1, f"{slen} >< {len(_probs[:slen + 1]) - 1}"
-        # masked_preds: torch.FloatTensor = probs[torch.arange(1, slen + 1), torch.arange(slen)]
-
         for method in methods:
             prob, alls = method(_probs[:slen + 1], origids=origids, return_all=True)
             if return_all:
@@ -298,118 +290,9 @@ def _inner_score_stuff(self, data, inds, lens, methods, scores, all_plls, return
     del _probs
 
 
-# def _inner_pll_stuff(self, data, inds, lens, methods, scores, all_plls, return_all):
-#     # print(sum(lens),"::", inds)
-#     bert_forward = torch.concat(
-#         [torch.tensor(self.mask_tokenize(data[d]['tokens'],
-#                                          pad=max(lens) - data[d]['len']
-#                                          ),
-#                       device="cpu"
-#                       )
-#          for d in inds],
-#         dim=0).to(self.device)
-#
-#     # if slen > batch_size, then send it as a single batch.
-#
-#     _probs = self.softmax(self.bert_am(bert_forward)[0])[:, 1:, :]
-#     del bert_forward
-#     for ind, slen in zip(inds, lens):
-#         # Original token IDs that were masked
-#         origids = torch.tensor(self.tokenizer.convert_tokens_to_ids(data[ind]['tokens']), dtype=torch.long).to(
-#             self.device)
-#
-#         # Gathered probabilities based on the original token IDs
-#         gprobs = _probs[:slen].gather(-1, origids.unsqueeze(0).repeat(slen, 1).unsqueeze(-1)).squeeze(-1)
-#         _probs = _probs[slen:]
-#         dia = torch.diag(gprobs, diagonal=0)
-#
-#         prob, alls = method(_probs[:slen + 1], return_all=True)
-#         if return_all:
-#             assert ind not in all_plls["pll"]
-#             all_plls["pll"][ind] = dia.tolist()
-#         assert ind not in scores["pll"]
-#         scores["pll"][ind] = prob
-#         del origids, gprobs, dia
-#         torch.cuda.empty_cache()
-
-
 def unsort_flatten(mapping):
     # print(mapping.keys())
     return {f: list(mapping[f][k] for k in range(len(mapping[f]))) for f in mapping}
-
-
-# scores equivalently to the old method, even with padding.
-# Can be used to batch across examples.
-# def false_pll_score_batched(self, sents: list, return_all=False):
-#     self.bert.eval()
-#     with torch.no_grad():
-#         data = {}
-#         for sent in sents:
-#             tokens = self.tokenizer.tokenize(sent)
-#             data[len(data)] = {
-#                 'tokens': tokens,
-#                 'len': len(tokens)
-#             }
-#         max_len = max(data[d]['len'] for d in data)
-#         scores = []
-#         all_plls = []
-#
-#         bert_forward = torch.concat(
-#             [torch.tensor(self._tokens(data[d]['tokens'], pad=max_len - data[d]['len'])) for d in data], dim=0
-#         )
-#         print(bert_forward.shape)
-#
-#
-#         # bert_forward = torch.concat(
-#         #     [torch.tensor(self.mask_tokenize(data[d]['tokens'], pad=max_len - data[d]['len'])) for d in
-#         #      data], dim=0)
-#         _probs = []
-#         i = 0
-#         while i < len(bert_forward):
-#             # print(i)
-#             f = bert_forward[i:i+BATCH_SIZE].to(self.device)
-#             _probs.append(self.softmax(self.bert(f, attention_mask=(f!=self.tokenizer.pad_token_id))[0])[:, 1:, :])
-#             i += BATCH_SIZE
-#             del f
-#         del bert_forward
-#
-#         all_probs = torch.concat(_probs, dim=0)
-#
-#         for d in range(len(data)):
-#             sent = data[d]
-#             # Tokens from the original sentence
-#             tokens = sent['tokens']
-#             n_tokens = sent['len']
-#
-#             probs = all_probs[:n_tokens]
-#             all_probs = all_probs[n_tokens:]
-#
-#             # Original token IDs that were masked
-#             origids = torch.tensor(self.tokenizer.convert_tokens_to_ids(tokens), dtype=torch.long).to(self.device)
-#
-#             # Gathered probabilities based on the original token IDs
-#             gprobs = probs.gather(-1, origids.unsqueeze(0).repeat(data[d]['len'], 1).unsqueeze(-1)).squeeze(-1)
-#
-#             dia = torch.diag(gprobs, diagonal=0)
-#             loga = torch.log(dia)
-#             meana = torch.mean(loga, dim=-1)
-#             if return_all:
-#                 all_plls.append(dia.tolist())
-#             prob = meana.detach().item()
-#
-#             scores.append(prob)
-#             del probs, origids, gprobs, dia, loga, meana
-#         for d in data:
-#             data[d].clear()
-#         data.clear()
-#         del all_probs
-#         if self.device == "cuda":
-#             torch.cuda.empty_cache()
-#
-#         # print(n_tokens)
-#         if return_all:
-#             return scores, all_plls
-#         return scores
 
 
 def cos_score_batched(self, sents: list, return_all=True):
@@ -488,22 +371,15 @@ def score_batched(self, methods, sents: list, return_all=True):
         return unsort_flatten(scores)
 
 
-def print_token_details(*, dset, data_path, resdir="res", model="bert-large-uncased", fb=None):
-    # format = {dset}_{doc#}_{method}s.csv
+def print_token_details(*, dset, data_path, resdir="res", model="bert-large-cased", fb=None):
     if fb is None:
         fb = FitBert(disable_gpu=False, model_name=model)
         fb.tokenizer.add_tokens(['?x', '?y'])
     lockfile = os.path.join(resdir, ".lock")
 
     for dset in [dset]:  # ['dev', 'train']:
-        # dset_scores = {}
-        # all_scores[dset] = dset_scores
-
-        # while lock file exists:
-        #   sleep 1 second
         tqdocs = tqdm(read_docred(dset, path=data_path), total=(1000 if dset == 'dev' else 3053))
         for d, doc in enumerate(tqdocs):
-            metrics = []
             while os.path.exists(lockfile):
                 print("Sleep.")
                 time.sleep(1.0)
@@ -521,7 +397,6 @@ def print_token_details(*, dset, data_path, resdir="res", model="bert-large-unca
                     continue
             try:
                 os.remove(lockfile)
-                # print(f"Running for {metrics}")
                 ments = mentions(doc)
                 answs = answer_prompts(doc)
                 trels = len(rel_info)
@@ -529,7 +404,6 @@ def print_token_details(*, dset, data_path, resdir="res", model="bert-large-unca
                     for r, p in enumerate(rel_info):
                         prom = prompt(p)
                         mapping = candidate_maps(prom, doc)
-                        # resfile.write(f"{dset} {d} {p}\n")
                         csvfile.write(f"{dset} {d} {p}\n")
                         cands = list(candidates(prom, ments, return_ments=True))
                         tcands = len(ments)
@@ -538,10 +412,8 @@ def print_token_details(*, dset, data_path, resdir="res", model="bert-large-unca
                         alloweds = []
                         plls = []
                         verbs = []
-                        # doc_scores[p] = scores
                         tqdocs.set_description(f"D{d} {p}[{r}/{trels}] C[{tcands}]")
                         _prompt = fb.tokenizer.tokenize(prom)
-                        # for i, c in enumerate(cands):
                         for can, (head, tail) in cands:
                             scores.append(can in answs)  # Are they true sentences?
                             x, y = mapping[can]
@@ -574,19 +446,8 @@ def print_token_details(*, dset, data_path, resdir="res", model="bert-large-unca
                                 else:
                                     bios.append('O')
 
-                            # print(_tokenz)
-                            # print(bios)
-                            # print(_prompt)
-                            # print(_head)
-                            # print(_tail)
-                            # print(_tokenz[x_loc:x_loc + len(_head)])
-                            # print(_tokenz[y_loc:y_loc + len(_tail)])
                             plls.append(bios)  # B/I/O markers
-                            # scores.extend(pll_score_batched(fb, cands[i:i+b_sents]))
-                        # for c, s in sorted(zip(cands, scores), key=lambda x: x[1]):
-                        #     pass
                         for c, v, s, a, pl in sorted(zip(cands, verbs, scores, alloweds, plls), key=lambda x: x[2]):
-                            # resfile.write(f"{s:.2f}:   \"{c}\"\n")
                             plls_string = ", ".join(pl)
                             csvfile.write(f"\"{c[0]}\", {a}, {v}, {s}, {plls_string}\n")
                         csvfile.write(f"\n")
@@ -601,100 +462,12 @@ def print_token_details(*, dset, data_path, resdir="res", model="bert-large-unca
                 raise e
     return fb
 
-
-
-# def print_token_details(fb, dset, data_path, resdir="res"):
-#     data_path = data_path if data_path else "data/docred"
-#     fb.tokenizer.add_tokens(['?x', '?y'])
-#     for dset in [dset]:  # ['dev', 'train']:
-#         # dset_scores = {}
-#         # all_scores[dset] = dset_scores
-#         tqdocs = tqdm(read_docred(dset, path=data_path), total=(1000 if dset == 'dev' else 3053))
-#         for d, doc in enumerate(tqdocs):
-#             if d not in range(d_start, d_end):
-#                 continue
-#             ments = mentions(doc)
-#             answs = answer_prompts(doc)
-#             trels = len(rel_info)
-#
-#             with open(f'{resdir}/{dset}_{d}_tokens.csv', 'w') as csvfile:
-#                 for r, p in enumerate(rel_info):
-#                     if r > 10:
-#                         continue
-#                     # These three should give if it fits the logical restrictions.
-#                     prom = prompt(p)
-#                     mapping = candidate_maps(prom, doc)
-#                     # resfile.write(f"{dset} {d} {p}\n")
-#                     csvfile.write(f"{dset} {d} {p}\n")
-#                     cands = list(candidates(prom, ments, return_ments=True))
-#                     tcands = len(ments)
-#                     tcands *= (tcands - 1)
-#                     scores = []
-#                     alloweds = []
-#                     plls = []
-#                     verbs = []
-#                     # doc_scores[p] = scores
-#                     tqdocs.set_description(f"D{d} {p}[{r}/{trels}] C[{tcands}]")
-#                     _prompt = fb.tokenizer.tokenize(prom)
-#                     # for i, c in enumerate(cands):
-#                     for can, (head, tail) in cands:
-#                         scores.append(can in answs)  # Are they true sentences?
-#                         x, y = mapping[can]
-#                         alloweds.append((x[1] in rel_info[p]['domain']) and (y[1] in rel_info[p]['range']))
-#                         _tokenz = fb.tokenizer.tokenize(can)
-#                         _head = fb.tokenizer.tokenize(head)
-#                         _tail = fb.tokenizer.tokenize(tail)
-#                         x_loc = _prompt.index('?x')
-#                         y_loc = _prompt.index('?y') + len(_head) - 1
-#                         verb_loc = rel_info[p]['verb']
-#                         verb_bump = 0
-#                         if verb_loc > x_loc:
-#                             verb_bump += len(_head) - 1
-#                         if verb_loc > y_loc:
-#                             verb_bump += len(_tail) - 1
-#                         verbs.append(verb_loc + verb_bump)
-#
-#                         bios = []
-#                         for t in range(len(_tokenz)):
-#                             if t in range(x_loc, x_loc + len(_head)):
-#                                 if t == x_loc:
-#                                     bios.append('B')
-#                                 else:
-#                                     bios.append('I')
-#                             elif t in range(y_loc, y_loc + len(_tail)):
-#                                 if t == y_loc:
-#                                     bios.append('B')
-#                                 else:
-#                                     bios.append('I')
-#                             else:
-#                                 bios.append('O')
-#
-#                         # print(_tokenz)
-#                         # print(bios)
-#                         # print(_prompt)
-#                         # print(_head)
-#                         # print(_tail)
-#                         # print(_tokenz[x_loc:x_loc + len(_head)])
-#                         # print(_tokenz[y_loc:y_loc + len(_tail)])
-#                         plls.append(bios) # B/I/O markers
-#                         # scores.extend(pll_score_batched(fb, cands[i:i+b_sents]))
-#                     # for c, s in sorted(zip(cands, scores), key=lambda x: x[1]):
-#                     #     pass
-#                     for c, v, s, a, pl in sorted(zip(cands, verbs, scores, alloweds, plls), key=lambda x: x[2]):
-#                         # resfile.write(f"{s:.2f}:   \"{c}\"\n")
-#                         plls_string = ", ".join(pl)
-#                         csvfile.write(f"\"{c[0]}\", {a}, {v}, {s}, {plls_string}\n")
-#                     # resfile.write(f"\n")
-#                     # resfile.flush()
-#                     csvfile.write(f"\n")
-#                     csvfile.flush()
-
-
+# Borrowed the starter code from https://github.com/writerai/fitbert
+# Heavily modified, assume there are some strange changes ahead
 class FitBert:
     def __init__(
             self,
             model_name="bert-large-uncased",
-            # mask_token="***mask***",
             disable_gpu=False,
     ):
         # self.mask_token = mask_token
@@ -744,6 +517,8 @@ class FitBert:
 
     @staticmethod
     def softmax(x):
+        # Break into two functions to minimize the memory impact of calling .exp() on very large tensors.
+        # Further reduce memory impact by making it an in-place operation. Beware.
         return FitBert._inn_soft(x.exp_())
 
     @staticmethod
@@ -756,7 +531,6 @@ def fitb(dset, d_start, d_end, data_path, metric="pll", resdir="res"):
         "pll": pll_score_batched,
         "cos": cos_score_batched,
         "euc": euc_score_batched,
-        "euc2": euc_score_batched,
         "jsd": jsd_score_batched,
         "msd": msd_score_batched,
         "hel": hel_score_batched,
@@ -773,8 +547,6 @@ def fitb(dset, d_start, d_end, data_path, metric="pll", resdir="res"):
     data_path = data_path if data_path else "data/docred"
 
     for dset in [dset]:# ['dev', 'train']:
-        # dset_scores = {}
-        # all_scores[dset] = dset_scores
         tqdocs = tqdm(read_docred(dset, path=data_path), total=(1000 if dset == 'dev' else 3053))
         for d, doc in enumerate(tqdocs):
             if d not in range(d_start, d_end):
@@ -785,37 +557,27 @@ def fitb(dset, d_start, d_end, data_path, metric="pll", resdir="res"):
                 for r, p in enumerate(rel_info):
                     if r > 10:
                         continue
-                    # resfile.write(f"{dset} {d} {p}\n")
                     csvfile.write(f"{dset} {d} {p}\n")
                     cands = list(candidates(prompt(p), ments))
                     tcands = len(ments)
                     tcands *= (tcands - 1)
                     scores = []
                     plls = []
-                    # doc_scores[p] = scores
                     tqdocs.set_description(f"D{d} {p}[{r}/{trels}] C[{tcands}]")
-                    # for i, c in enumerate(cands):
                     i = 0
                     while i < len(cands):
                         scs, pls = score_func(fb, cands[i:i + SENTS_PER_BATCH], return_all=True)
                         scores.extend(scs)
                         plls.extend(pls)
-                        # scores.extend(pll_score_batched(fb, cands[i:i+SENTS_PER_BATCH]))
                         i += SENTS_PER_BATCH
-                    # for c, s in sorted(zip(cands, scores), key=lambda x: x[1]):
-                    #     pass
                     for c, s, pl in sorted(zip(cands, scores, plls), key=lambda x: x[1]):
-                        # resfile.write(f"{s:.2f}:   \"{c}\"\n")
                         plls_string = ", ".join(f"{v:.6f}" for v in pl)
                         csvfile.write(f"\"{c}\", {s:.2f}, {plls_string}\n")
-                    # resfile.write(f"\n")
-                    # resfile.flush()
                     csvfile.write(f"\n")
                     csvfile.flush()
 
 
 def fitb_distributed(dset, data_path, resdir="res", model="bert-large-uncased", fb=None):
-    # format = {dset}_{doc#}_{method}s.csv
     score_func = score_batched
     trels = len(rel_info)
 
@@ -830,9 +592,6 @@ def fitb_distributed(dset, data_path, resdir="res", model="bert-large-uncased", 
     lock = None
 
     for dset in [dset]:  # ['dev', 'train']:
-        # dset_scores = {}
-        # all_scores[dset] = dset_scores
-
         # while lock file exists:
         #   sleep 1 second
         tqdocs = tqdm(read_docred(dset, path=data_path), total=(1000 if dset == 'dev' else 3053))
@@ -871,7 +630,6 @@ def fitb_distributed(dset, data_path, resdir="res", model="bert-large-uncased", 
                 methods = [KNOWN_METHODS[m] for m in metrics]
                 # print(f"Running for {metrics}")
                 for r, p in enumerate(rel_info):
-                    # resfile.write(f"{dset} {d} {p}\n")
                     for fh in file_handles.values():
                         fh.write(f"{dset} {d} {p}\n")
                     cands = list(candidates(prompt(p), ments))
@@ -879,27 +637,16 @@ def fitb_distributed(dset, data_path, resdir="res", model="bert-large-uncased", 
                     tcands *= (tcands - 1)
                     scores = {m:[] for m in metrics}
                     plls = {m:[] for m in metrics}
-                    # doc_scores[p] = scores
                     tqdocs.set_description(f"D{d} {p}[{r}/{trels}] C[{tcands}]")
-                    # for i, c in enumerate(cands):
                     i = 0
                     while i < len(cands):
-                        # if "pll" in metrics:
-                        #     scs, pls = pll_score_batched(fb, sents=cands[i:i + SENTS_PER_BATCH], return_all=True)
-                        #     torch.cuda.empty_cache()
-                        #     scores["pll"].extend(scs)
-                        #     plls["pll"].extend(pls)
                         if len(methods) > 0:
                             scs, pls = score_func(fb, methods=methods, sents=cands[i:i + SENTS_PER_BATCH], return_all=True)
                             torch.cuda.empty_cache()
                             for metric in metrics:
-                                # if metric != "pll":
                                 scores[metric].extend(scs[metric])
                                 plls[metric].extend(pls[metric])
-                        # scores.extend(pll_score_batched(fb, cands[i:i+SENTS_PER_BATCH]))
                         i += SENTS_PER_BATCH
-                    # for c, s in sorted(zip(cands, scores), key=lambda x: x[1]):
-                    #     pass
                     for metric in metrics:
                         for c, s, pl in sorted(zip(cands, scores[metric], plls[metric]), key=lambda x: x[1]):
                             plls_string = ", ".join(f"{v:.6f}" for v in pl)
@@ -930,40 +677,30 @@ def fitb_distributed(dset, data_path, resdir="res", model="bert-large-uncased", 
                 pass
     return fb
 
+
 if __name__ == '__main__':
     dset = sys.argv[1]
-    # d_start = int(sys.argv[2])
-    # d_end = int(sys.argv[3])
-    data_path = sys.argv[2]
-    res_path = sys.argv[3]
-    # model = sys.argv[4]
-    if len(sys.argv) > 4:
-        BATCH_SIZE = int(sys.argv[4])
-    if len(sys.argv) > 5:
-        SENTS_PER_BATCH = int(sys.argv[5])
+    data_path = sys.argv[2] if len(sys.argv) > 2 else "data"
+    res_path = sys.argv[3] if len(sys.argv) > 3 else "res"
+
+    BATCH_SIZE = int(sys.argv[4]) if len(sys.argv) > 4 else 512
+    SENTS_PER_BATCH = int(sys.argv[5]) if len(sys.argv) > 5 else 256
 
     print(f"Batch size {BATCH_SIZE} of {SENTS_PER_BATCH} each.")
     time.sleep(2.0)
 
     with open(f'{data_path}/rel_info_full.json', 'r') as rel_info_file:
         rel_info = domain_range(docred=read_docred(dset, path=data_path), rel_info=json.load(rel_info_file))
-    # fb=None
-    # model = "bert-large-uncased"
-    # fb = print_token_details(dset=dset, data_path=data_path, resdir=res_path, model=model)
-    # fitb_distributed(dset, data_path, resdir=res_path, model=model, fb=fb)
-    # del fb
-    # model = "roberta-large"
-    # model = "bert-large-uncased"
-    # fb = print_token_details(dset=dset, data_path=data_path, resdir=res_path, model="bert-base-cased")
-    # del fb
+
     torch.cuda.empty_cache()
-    # for model in ["roberta-base", "bert-base-cased", "roberta-large", "bert-large-cased", "bert-large-uncased"]:
-    for model in ["roberta-large"]:
-        fb = fitb_distributed(dset, data_path, resdir=res_path, model=model)
+    for model in ["roberta-base", "bert-base-cased", "roberta-large", "bert-large-cased", "bert-large-uncased"]:
+        # First gather all the easy stuff: Information about each sentence, its entities, etc.
+        fb = print_token_details(dset=dset, data_path=data_path, resdir=res_path, model=model)
+        # Second, run the harder experiments.
+        # You should prefer the "distributed" version, as it's generally more robustly implemented.
+        fb = fitb_distributed(dset, data_path, resdir=res_path, model=model, fb=fb)
         del fb
         torch.cuda.empty_cache()
+        # Sleep a little, let the system unwind a bit. Everyone needs a vacation now and then, right?
         time.sleep(10)
-
-    # for metric in ["jsd"]:  # ["euc", "pll", "cos", "jsd"]:
-    #     fitb(dset, d_start, d_end, data_path, metric, resdir="res/kcap2023-results")
 
