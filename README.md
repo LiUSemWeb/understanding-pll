@@ -4,6 +4,12 @@ Code, data, and augmentation scripts for the IJCKG 2023 submission "Understandin
 If this message is here, it means that this README is incomplete.
 The code should all be there.
 
+## Requirements
+The python version we used is `3.8.16`.
+There is a requirements.txt file with the top-level Python libraries needed for the experiments, the remainder should be dependencies of those and be automatically fetched.
+Other libraries may be needed to do the plotting/visualization.
+There is a data dependency; see the next section.
+
 
 ## Data
 You will need the original DocRED files.
@@ -40,6 +46,5 @@ The script will output various metrics for comparing the distributions, and will
 
 
 ## Todo:
-1. requirements.txt
-2. Clean up the scripts a little more.
+1. Clean up the scripts a little more.
 
