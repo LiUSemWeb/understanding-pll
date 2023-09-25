@@ -1,8 +1,6 @@
 # Understanding and Estimating PLL
 Code, data, and augmentation scripts for the IJCKG 2023 submission "Understanding and Estimating Pseudo-Log-Likelihood for Zero-Shot Fact Extraction with Masked Language Models."
 
-If this message is here, it means that this README is incomplete.
-The code should all be there.
 
 ## Requirements
 The python version we used is `3.8.16`.
