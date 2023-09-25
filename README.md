@@ -34,7 +34,7 @@ To monitor progress, `whatsleft.py` can be used, but has no other purpose than t
 
 
 To analyze the results, use:
-`python scripts/eval/plot_compare_metrics.py res`
+`python scripts/plot_compare_metrics.py res`
 
 Here, `res` points to the folder where the results are stored.
 It will first read all of the results and filter unnecessary data, then save the filtered data to a few pickle files.
