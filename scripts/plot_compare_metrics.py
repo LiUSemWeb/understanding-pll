@@ -11,7 +11,6 @@ from scipy.stats import pearsonr, ks_2samp, ttest_ind, spearmanr
 from tqdm import tqdm
 import collections
 from multiprocessing import Pool
-import sys
 import os
 
 
