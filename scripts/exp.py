@@ -7,9 +7,10 @@ from functional import pseq, seq
 import torch
 from torch import nn
 from tqdm import tqdm
+from collections import Counter, defaultdict
 import sys
 
-from eval.util import domain_range, candidate_maps
+# from eval.util import domain_range
 
 torch.set_num_threads((torch.get_num_threads()*2) - 1)
 torch.set_num_interop_threads((torch.get_num_interop_threads()*2) - 1)
@@ -153,6 +154,14 @@ def candidates(prompt:str, choices, return_ments=False):
             yield prompt.replace("?x", a, 1).replace("?y", b, 1), (a, b)
         else:
             yield prompt.replace("?x", a, 1).replace("?y", b, 1)
+
+
+def candidate_maps(prompt:str, doc):
+    choices, types = mentions(doc)
+    prompts = {}
+    for a, b in permutations(choices, 2):
+        prompts[prompt.replace("?x", a, 1).replace("?y", b, 1)] = ((a, types[a]), (b, types[b]))
+    return prompts
 
 
 def answers(doc):
@@ -676,6 +685,45 @@ def fitb_distributed(dset, data_path, resdir="res", model="bert-large-uncased", 
             except:
                 pass
     return fb
+
+
+def get_entity_type(doc, index):
+    types = set()
+    # print(doc)
+    # print(index)
+    for mention in doc["vertexSet"][index]:
+        types.add(mention["type"])
+    return types
+
+
+def threshold_counter(ct: Counter, thresh=0.05):
+    total = sum(ct.values())
+    return [a for a, b in ct.items() if b/total > thresh]
+
+
+def domain_range(docred=None, rel_info=None, thresh=0.05):
+    # dir = "/data/git/text2kg2023-rilca-util"#\\res\\eswc2023-results"
+    if not docred:
+        docred = read_docred(dset='train')
+    domain = defaultdict(Counter)
+    range = defaultdict(Counter)
+    for d, doc in enumerate(docred):
+        for label in doc["labels"]:
+            r = label['r']
+            domain[r].update(get_entity_type(doc, label['h']))
+            range[r].update(get_entity_type(doc, label['t']))
+    if rel_info:
+        for p in domain:
+            rel_info[p]['domain'] = threshold_counter(domain[p], thresh)
+            rel_info[p]['range'] = threshold_counter(range[p], thresh)
+        return rel_info
+    else:
+        out_domain = {}
+        out_range = {}
+        for p in domain:
+            out_domain[p] = threshold_counter(domain[p], thresh)
+            out_range[p] = threshold_counter(range[p], thresh)
+        return out_domain, out_range
 
 
 if __name__ == '__main__':
