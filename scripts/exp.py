@@ -124,10 +124,15 @@ def sentences(doc):
 
 def mentions(doc):
     ments = set()
+    types = dict()
     for ent in doc['vertexSet']:
+        # print(ent)
         for ment in ent:
-            ments.add(ment['name'])
-    return list(ments)
+            name = ment['name']
+            ments.add(name)
+            if name not in types:
+                types[name] = ment['type']
+    return list(ments), types
 
 
 def entities(doc):
@@ -204,7 +209,7 @@ def read_docred(dset:str='dev', *, path:str='data/docred', doc=-1, verbose=False
                 print("-" * 50)
                 print("Sents:", "\n"+"\n".join(sentences(doc)))
                 print("-" * 50)
-                print("\n"+"\n".join(candidates("The headquarters of ***mask*** is in ***mask***.", mentions(doc))))
+                print("\n"+"\n".join(candidates("The headquarters of ***mask*** is in ***mask***.", mentions(doc)[0])))
                 print("-" * 50)
                 print("Ans:", "\n"+"\n".join(str(a) for a in answers(doc)))
                 print("-" * 50)
@@ -406,7 +411,7 @@ def print_token_details(*, dset, data_path, resdir="res", model="bert-large-case
                     continue
             try:
                 os.remove(lockfile)
-                ments = mentions(doc)
+                ments = mentions(doc)[0]
                 answs = answer_prompts(doc)
                 trels = len(rel_info)
                 with open(fname, 'w') as csvfile:
@@ -560,7 +565,7 @@ def fitb(dset, d_start, d_end, data_path, metric="pll", resdir="res"):
         for d, doc in enumerate(tqdocs):
             if d not in range(d_start, d_end):
                 continue
-            ments = mentions(doc)
+            ments = mentions(doc)[0]
             trels = len(rel_info)
             with open(f'{resdir}/{dset}_{d}_{metric}s.csv', 'w') as csvfile:
                 for r, p in enumerate(rel_info):
@@ -608,7 +613,7 @@ def fitb_distributed(dset, data_path, resdir="res", model="bert-large-uncased", 
             if d in TOO_BIG:
                 continue
             torch.cuda.empty_cache()
-            ments = mentions(doc)
+            ments = mentions(doc)[0]
 
             file_handles = {}
             metrics = []
